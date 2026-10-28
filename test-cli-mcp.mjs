@@ -81,6 +81,50 @@ try {
   assert.equal(patchRef.includes("Authorization: !!js '" + String.fromCharCode(96) + "Bearer ${process.env.MCP_TOKEN}" + String.fromCharCode(96) + "'"), true, "${NAME} must be formatted into a !!js template");
   assert.equal(run(["mcp", "remove", "expr-ref", "--yes", "--profile", "test"]).status, 0);
   pass("dsh-panel mcp add formats ${NAME} into a !!js template");
+
+  // #67：手写行也能启停、删除、原文编辑，关→开后文件逐字节还原。
+  const hand = [
+    "# keep",
+    "- id: mcp-memory",
+    "  name: '@deepseek-ai/dsh-mcp-client'",
+    "  config:",
+    "    serverName: memory",
+    "    transport: stdio",
+    "    command: npx",
+    "    maxInstructionBytes: 8000",
+    ""
+  ].join("\n");
+  const patchPath = join(profileDir, "cordis.patch.yml");
+  await writeFile(patchPath, hand);
+  const listed = run(["mcp", "list", "--profile", "test"]);
+  assert.equal(listed.status, 0, listed.stderr);
+  assert.match(listed.stdout, /启用\s+memory/);
+  assert.equal(listed.stdout.includes("外部"), false);
+  const off = run(["mcp", "disable", "memory", "--profile", "test"]);
+  assert.equal(off.status, 0, off.stderr);
+  const disabledText = await readFile(patchPath, "utf8");
+  assert.match(disabledText, /disabled: true/);
+  assert.equal(disabledText.includes("maxInstructionBytes: 8000"), true);
+  assert.equal(disabledText.includes("# keep"), true);
+  const on = run(["mcp", "enable", "memory", "--profile", "test"]);
+  assert.equal(on.status, 0, on.stderr);
+  assert.equal(await readFile(patchPath, "utf8"), hand, "enable must restore the hand-written file byte for byte");
+  const shown = run(["mcp", "raw", "memory", "--profile", "test"]);
+  assert.equal(shown.status, 0, shown.stderr);
+  assert.match(shown.stdout, /id: mcp-memory/);
+  const rawFile = join(dir, "memory.yml");
+  await writeFile(rawFile, shown.stdout.replace("maxInstructionBytes: 8000", "maxInstructionBytes: 4096"));
+  const applied = run(["mcp", "raw", "memory", "--profile", "test", "--set", rawFile]);
+  assert.equal(applied.status, 0, applied.stderr);
+  const afterRaw = await readFile(patchPath, "utf8");
+  assert.equal(afterRaw.includes("maxInstructionBytes: 4096"), true);
+  assert.equal(afterRaw.startsWith("# keep\n"), true);
+  const removedHand = run(["mcp", "remove", "memory", "--yes", "--profile", "test"]);
+  assert.equal(removedHand.status, 0, removedHand.stderr);
+  const afterHand = await readFile(patchPath, "utf8");
+  assert.equal(afterHand.includes("mcp-memory"), false);
+  assert.equal(afterHand.startsWith("# keep\n"), true);
+  pass("dsh-panel mcp enable/disable/raw/remove operate on hand-written rows");
   const version = run(["--version"]);
   assert.equal(version.status, 0, version.stderr);
   // 版本号从 package.json 读，避免每次发版都要改测试（旧写法硬编码 2.0.x）。

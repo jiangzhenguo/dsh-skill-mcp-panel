@@ -8,9 +8,14 @@ import {
   generateManagedBlock,
   listMcpPatchRows,
   readManagedBlock,
+  readMcpEntryText,
   readPatchFile,
+  removeMcpEntryInText,
+  replaceMcpEntryTextInText,
+  replaceMcpEntryWithRowInText,
   replaceManagedBlock,
   evacuateForeignRows,
+  setEntryDisabledInText,
   validatePatchText,
   writeManagedRows
 } from "./lib/patch-editor.js";
@@ -322,6 +327,149 @@ pass("mixed insert entries stay untouched and are reported");
   assert.equal(moved.moved, 0, "混合 insert 不搬");
   assert.equal(moved.raw, input, "不搬时文件不得变动");
   pass("foreign insert members are never evacuated");
+}
+
+{
+  // #67：块外手写行的 disabled 翻转往返后与原文逐字节一致，且只动这一条。
+  const original = [
+    "# user comment",
+    "- id: ui-theme",
+    "  name: '@deepseek-ai/dsh-client-ui-theme'",
+    "  config:",
+    "    fontSize: 14",
+    "- id: mcp-memory",
+    "  name: '@deepseek-ai/dsh-mcp-client'",
+    "  # hand-written",
+    "  config:",
+    "    serverName: memory",
+    "    transport: stdio",
+    "    command: npx",
+    "    maxInstructionBytes: 8000",
+    "    env:",
+    "      TOKEN: !!js '`${process.env.TOKEN}`'",
+    ""
+  ].join("\n");
+  const disabled = setEntryDisabledInText(original, "mcp-memory", true);
+  assert.notEqual(disabled, original);
+  assert.match(disabled, /id: mcp-memory\n {2}disabled: true\n/);
+  assert.equal(disabled.includes("maxInstructionBytes: 8000"), true);
+  assert.equal(disabled.includes("TOKEN: !!js"), true);
+  assert.equal(disabled.includes("fontSize: 14"), true);
+  assert.equal(disabled.includes("# hand-written"), true);
+  assert.equal(disabled.includes("# user comment"), true);
+  const enabled = setEntryDisabledInText(disabled, "mcp-memory", false);
+  assert.equal(enabled, original, "disable then enable must restore the file byte for byte");
+  assert.equal(setEntryDisabledInText(original, "mcp-memory", false), original);
+  pass("setEntryDisabledInText toggles one entry and round-trips byte for byte");
+}
+
+await expectThrow("!!js disabled is refused", () => setEntryDisabledInText([
+  "- id: mcp-memory",
+  "  name: '@deepseek-ai/dsh-mcp-client'",
+  "  disabled: !!js process.env.OFF === '1'",
+  "  config:",
+  "    serverName: memory",
+  ""
+].join("\n"), "mcp-memory", false), /!!js/);
+
+{
+  const original = [
+    "# keep",
+    "- insert:",
+    "    - id: mcp-memory",
+    "      name: '@deepseek-ai/dsh-mcp-client'",
+    "      config:",
+    "        serverName: memory",
+    "        transport: stdio",
+    "        command: npx",
+    "        maxInstructionBytes: 8000",
+    "    - id: other-plugin",
+    "      name: 'dsh-client-pricing'",
+    "- id: tail",
+    "  name: 'not-mcp'",
+    ""
+  ].join("\n");
+  const text = readMcpEntryText(original, { id: "mcp-memory" });
+  assert.match(text, /^ {4}- id: mcp-memory\n/);
+  assert.equal(text.includes("maxInstructionBytes: 8000"), true);
+  const edited = text.replace("maxInstructionBytes: 8000", "maxInstructionBytes: 4096");
+  const next = replaceMcpEntryTextInText(original, { id: "mcp-memory" }, edited);
+  assert.equal(next.row.config.maxInstructionBytes, 4096);
+  assert.equal(next.raw.includes("# keep"), true);
+  assert.equal(next.raw.includes("id: other-plugin"), true);
+  assert.equal(next.raw.includes("id: tail"), true);
+  assert.equal(next.raw.includes("maxInstructionBytes: 4096"), true);
+  assert.equal(next.raw.includes("maxInstructionBytes: 8000"), false);
+  // 跨度之外与原文一致：把被替换的那一段扣掉后，两边剩余字节相同。
+  const beforeSpan = original.indexOf(text);
+  assert.equal(original.slice(0, beforeSpan) + original.slice(beforeSpan + text.length), next.raw.slice(0, beforeSpan) + next.raw.slice(beforeSpan + edited.length));
+  pass("raw edit replaces one entry and leaves every other byte alone");
+}
+
+{
+  const original = [
+    "# >>> dsh-skill-mcp-panel:mcp:begin",
+    "- insert:",
+    "    - id: panel-mcp-demo",
+    "      name: '@deepseek-ai/dsh-mcp-client'",
+    "      config:",
+    "        serverName: demo",
+    "        transport: stdio",
+    "        command: node",
+    "# <<< dsh-skill-mcp-panel:mcp:end",
+    ""
+  ].join("\n");
+  const removed = removeMcpEntryInText(original, { serverName: "demo" });
+  assert.equal(removed.includes("panel-mcp-demo"), false);
+  assert.match(removed, /\[\]/);
+  await validatePatchText(removed);
+  pass("removing the last managed-block row restores a valid empty patch");
+}
+
+{
+  const original = [
+    "# keep-me",
+    "- id: mcp-memory",
+    "  name: '@deepseek-ai/dsh-mcp-client'",
+    "  config:",
+    "    serverName: memory",
+    "    transport: stdio",
+    "    command: npx",
+    "- id: ui-theme",
+    "  name: '@deepseek-ai/dsh-client-ui-theme'",
+    "  config: { fontSize: 14 }",
+    ""
+  ].join("\n");
+  const removed = removeMcpEntryInText(original, { id: "mcp-memory" });
+  assert.equal(removed.includes("mcp-memory"), false);
+  assert.equal(removed.startsWith("# keep-me\n"), true);
+  assert.match(removed, /id: ui-theme/);
+  await validatePatchText(removed);
+  pass("removing a hand-written row leaves sibling rows byte-identical");
+}
+
+{
+  const original = [
+    "# keep",
+    "- id: mcp-memory",
+    "  name: '@deepseek-ai/dsh-mcp-client'",
+    "  # hand note",
+    "  config:",
+    "    serverName: memory",
+    "    transport: stdio",
+    "    command: npx",
+    "    maxInstructionBytes: 8000",
+    ""
+  ].join("\n");
+  const row = listMcpPatchRows(original)[0];
+  row.config.command = "node";
+  const next = replaceMcpEntryWithRowInText(original, { id: "mcp-memory" }, row);
+  assert.equal(next.includes("maxInstructionBytes: 8000"), true);
+  assert.equal(next.includes("command: node"), true);
+  assert.equal(next.includes("id: mcp-memory"), true);
+  assert.equal(next.startsWith("# keep\n"), true);
+  assert.equal(next.includes("# >>> dsh-skill-mcp-panel"), false, "template save must not move the row into a managed block");
+  pass("template row replace keeps unmodeled keys and the original location");
 }
 
 console.log("\n" + passed + " passed, 0 failed");

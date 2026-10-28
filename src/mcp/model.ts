@@ -355,7 +355,28 @@ export function inputFromPatchRow(row: PatchRow): McpServerInput {
   });
 }
 
-/** 把编辑输入合并到旧 patch 行上（保留输入中未出现的 secret key）。 */
+/** 表单会写回的 config 键。其余键（如 maxInstructionBytes）在编辑时原样保留。 */
+const MODELED_CONFIG_KEYS = new Set([
+  "serverName",
+  "transport",
+  "command",
+  "args",
+  "env",
+  "cwd",
+  "url",
+  "headers",
+  "toolCallTimeoutMs",
+  "failOnStartupError",
+  "reconnect"
+]);
+
+/**
+ * 把编辑输入合并到旧 patch 行上。
+ *
+ * 保留输入中未出现的 secret key，也保留表单还没建模的 config / 顶层字段。
+ * 手写 id（不是 `panel-mcp-<旧 serverName>`）保持不变，避免一次表单保存把行改名。
+ * 面板自己按 serverName 生成的 id 仍随改名更新。
+ */
 export function applyServerEdit(previous: PatchRow | undefined, input: McpServerInput, enabled = true): PatchRow {
   if (previous === undefined) return toPatchRow(input, enabled);
   const oldConfig = configFromPatchRow(previous) ?? {};
@@ -365,5 +386,17 @@ export function applyServerEdit(previous: PatchRow | undefined, input: McpServer
   if (next.transport === "stdio") next.env = mergeSecretPatch(oldEnv, next.env);
   if (next.transport === "streamable-http") next.headers = mergeSecretPatch(oldHeaders, next.headers);
   const normalized = mcpServerInputSchema.parse(next);
-  return toPatchRow(normalized, enabled);
+  const row = toPatchRow(normalized, enabled);
+  const previousName = typeof oldConfig.serverName === "string" ? oldConfig.serverName : serverNameFromRowId(previous.id);
+  if (typeof previous.id === "string" && previous.id !== rowIdForServerName(previousName ?? "")) row.id = previous.id;
+  const config: Record<string, unknown> = { ...(row.config as Record<string, unknown>) };
+  for (const [key, value] of Object.entries(oldConfig)) {
+    if (!MODELED_CONFIG_KEYS.has(key)) config[key] = value;
+  }
+  row.config = config;
+  for (const [key, value] of Object.entries(previous)) {
+    if (key === "id" || key === "name" || key === "disabled" || key === "config") continue;
+    if (!(key in row)) row[key] = value;
+  }
+  return row;
 }

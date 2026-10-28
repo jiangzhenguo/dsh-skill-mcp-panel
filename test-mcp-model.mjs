@@ -175,6 +175,41 @@ const clearedExpr = applyServerEdit(toPatchRow(withExpr), mcpServerInputSchema.p
 assert.deepEqual(clearedExpr.config.headers, {});
 pass("applyServerEdit keeps !!js secrets unless explicitly cleared");
 
+// 14b. #67：手写 id 与表单没建模的字段在编辑后还在；面板自己的 id 仍随改名更新。
+const handWritten = {
+  id: "mcp-memory",
+  name: "@deepseek-ai/dsh-mcp-client",
+  note: "keep-me",
+  config: {
+    serverName: "memory",
+    transport: "stdio",
+    command: "npx",
+    args: [],
+    env: {},
+    cwd: "",
+    toolCallTimeoutMs: 60000,
+    failOnStartupError: false,
+    reconnect: { enabled: true, initialDelayMs: 500, maxDelayMs: 30000, maxAttempts: 10 },
+    maxInstructionBytes: 8000
+  }
+};
+const kept = applyServerEdit(handWritten, mcpServerInputSchema.parse({
+  serverName: "memory",
+  transport: "stdio",
+  command: "node"
+}), true);
+assert.equal(kept.id, "mcp-memory");
+assert.equal(kept.note, "keep-me");
+assert.equal(kept.config.maxInstructionBytes, 8000);
+assert.equal(kept.config.command, "node");
+const renamedPanel = applyServerEdit(toPatchRow(stdio), mcpServerInputSchema.parse({
+  serverName: "gh",
+  transport: "stdio",
+  command: "npx"
+}), true);
+assert.equal(renamedPanel.id, "panel-mcp-gh");
+pass("applyServerEdit keeps hand-written ids and unmodeled fields");
+
 // 15. ${NAME} 直觉写法：面板/CLI 的统一入口，保存时格式化成 !!js 模板
 assert.deepEqual(parseWireScalar("${MCP_TOKEN}"), { __jsExpr: BT + "${process.env.MCP_TOKEN}" + BT });
 assert.deepEqual(parseWireScalar("Bearer ${MCP_TOKEN}"), { __jsExpr: BT + "Bearer ${process.env.MCP_TOKEN}" + BT });

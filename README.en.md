@@ -19,7 +19,7 @@
 A DSH plugin that brings **skill** and **MCP server** management into the DSH web home sidebar — click Skill / MCP in the left column and the center main area switches to a full panel (not a modal, not a tab in the Settings dialog), and changes take effect immediately. The package also ships the unified `dsh-panel` command: everything the panels can do, plus cross-profile upgrades.
 
 - 🗂️ **Skill management** — list and preview installed skills, search, workspace split and group filters, expand a card to read the full content, hot enable/disable and delete, plus `.md` / `.zip` / skill-folder adding and batch migration
-- 🔌 **MCP server management** — visually maintain the MCP managed block in the profile's `cordis.patch.yml`, with Stdio / HTTP transports, connection tests, and hot reload through DSH HMR after saving
+- 🔌 **MCP server management** — own every MCP server in the profile's `cordis.patch.yml` (form + raw YAML), with Stdio / HTTP transports, connection tests, and hot reload through DSH HMR after saving
 - 🧩 **Full panels, not modals** — the same slot mechanism as the host's built-in Plugins page; clicking the left column swaps the center main area, and each panel carries a “← Back to session” arrow
 - ⌨️ **The `dsh-panel` CLI** — `dsh-panel skill …` and `dsh-panel mcp …` expose everything the two panels can do
 - 📦 **Works out of the box** — both the npm package and the Release tarball ship prebuilt artifacts
@@ -119,7 +119,7 @@ The panel works exactly like the host's built-in Plugins page: a single **Skill 
 
 ### MCP panel
 
-- **Server management** — **Stdio** and **HTTP** transports: add, edit, enable/disable, delete and test connections; saving is hot-reloaded by DSH HMR, no gateway restart. Only the panel's own managed block is edited — everything else in `cordis.patch.yml` (including rows inside the block that are not ours) is preserved byte for byte
+- **Server management** — **Stdio** and **HTTP** transports: add, edit, enable/disable, delete and test connections; saving is hot-reloaded by DSH HMR, no gateway restart. Every `@deepseek-ai/dsh-mcp-client` row can be operated on, inside or outside the managed block, whatever its id. The form edits ordinary fields and keeps ones it does not model yet; **Raw** edits that one entry byte for byte. Rows that are not MCP servers (including foreign rows inside the block) stay byte-for-byte untouched
 - **Secrets** — `env` / `headers` are redacted in the UI and in RPC, an omitted key keeps its old value, and `${NAME}` in a value reads that environment variable
 - **Disable individual tools** — turn tools off by name; a disabled tool disappears from the model-facing tool list instead of being merely refused at call time, so the context saving is real
 - **OAuth sign-in** — one click for a remote `streamable-http` server that supports it (authorization-server discovery, dynamic client registration, authorization code + PKCE); the token is written back into that row and hot-reloaded, and it can be disconnected at any time
@@ -201,7 +201,7 @@ dsh-panel mcp add --name web --http --url https://example.com/mcp \
   --header 'Authorization=!!js `Bearer ${process.env.MCP_TOKEN}`' --profile web
 ```
 
-MCP configuration is written to the managed block in the target profile's `cordis.patch.yml` and hot-reloaded while the gateway is online. The block is delimited by `# >>> dsh-skill-mcp-panel:mcp:begin` / `# <<< ...end` — do not edit inside it.
+New MCP servers are appended to the managed block in the target profile's `cordis.patch.yml`. Every existing `@deepseek-ai/dsh-mcp-client` row — including hand-written ones — can be `enable`d, `disable`d and `remove`d, and `dsh-panel mcp raw` prints or `--set` replaces that one entry. Changes hot-reload while the gateway is online. The block is delimited by `# >>> dsh-skill-mcp-panel:mcp:begin` / `# <<< ...end`; leave non-MCP rows inside it alone.
 
 ### Updating the plugin
 
@@ -236,7 +236,7 @@ Every action in the page or via `dsh-panel skill` ends up as a change to the ski
 
 ### MCP
 
-The plugin writes MCP server configuration into the managed block in the profile's `cordis.patch.yml`; the actual connection and tool registration are done by the official DSH plugin @deepseek-ai/dsh-mcp-client, loaded automatically through DSH HMR.
+The plugin maintains every `@deepseek-ai/dsh-mcp-client` row in the profile's `cordis.patch.yml`; the actual connection and tool registration are done by the official DSH plugin @deepseek-ai/dsh-mcp-client, loaded automatically through DSH HMR.
 
 ## Development
 
@@ -254,6 +254,7 @@ dsh plugin --profile web remove dsh-skill-mcp-panel
 
 Only version notes that **change how you use the plugin**; see [Releases](https://github.com/Fishquito7/dsh-skill-mcp-panel/releases) for the full history.
 
+- **Unreleased (#67)** — the MCP page owns **every** `@deepseek-ai/dsh-mcp-client` row in `cordis.patch.yml`: enable, form edit, delete and OAuth no longer depend on the managed block or a `panel-mcp-*` id. The form keeps fields it does not model yet (for example `maxInstructionBytes`); **Raw** on the card (CLI: `dsh-panel mcp raw`) edits that one entry byte for byte. Existing configs need no migration. Non-MCP foreign rows stay preserved per ADR-0003. See ADR-0006
 - **v2.3.5** — fixes **the host freezing after disabling any MCP tool (#59 / #62)**. The cause was our own listener: the host's `ScopedLayers.effect()` emits `tools/change` synchronously both after a restriction is applied **and when it is undone**, while the plugin listened to that event and called `undo()` / `restrict()` from the listener — so it triggered itself and recursed synchronously; the `RangeError` from the exhausted stack was swallowed by an empty `catch`, so the process did not crash, it just kept burning 100% of the main thread. Reproduced against the host's real `@deepseek-ai/dsh-scope`: one event amplified into **887 `restrict` calls / 1774 `view` calls / 458 levels of recursion**. Now `tools/change` is owned by the controller alone and guarded against re-entry, each plugin's `sync()` only re-applies when the **denied set actually changes** (unchanged sets cost one `view`), agents still mounting are skipped via `mounting`, and every previously silent `catch` reports to the logger so this class of failure leaves a trace; the same issue's “Show plugin skills” checkbox is remembered in the browser now instead of resetting to checked
 - **v2.3.4** — fixes the “Open folder” bug where only the Documents folder opened (a regression from 2.3.3). `explorer.exe` on Windows does not accept forward slashes: the panel normalised the skill root into `C:/Users/.../.dsh/skills`, explorer treated that as an invalid target and silently opened its own default location, so every workspace showed “Documents”. The host now converts the path to native separators before handing it to the system, and the notice echoes that same path, so it can be pasted straight into Explorer. Two edge cases fixed along the way: the drive root `C:/` is no longer trimmed to `C:`, and a redundant trailing `\` is collapsed. The preview screenshots are refreshed with the two layouts (three-column / compact)
 - **v2.3.3** — the skills page gains a **three-column / compact layout switch** (#50): compact hides both side columns, turns the workspace picker into a collapsed dropdown and the groups into a chip row, and shows two cards per row; the button sits at the far right of the toolbar and the choice is remembered in the browser. The MCP page's “foreign rows in the managed block” notice can now actually be resolved: **[Move out of block]** copies those rows verbatim outside the markers (meaning unchanged), and **[How this works]** explains why a row lands there and why leaving it is harmless. **“Open folder” is fixed and really opens the file manager** (the host launches the platform's file manager, and creates the skill root first when it does not exist yet). The sidebar entry label is now `Skill / MCP`. Also merged two community PRs: `@deepseek-ai/cordis` moved to peerDependencies (no more shared-host-package-dependency warning from dshmarket) and panel rows outside the managed block are badged “Outside block”
