@@ -42,7 +42,7 @@ import {
   mcpServerInputSchema,
   patchRowToView,
   rowIdForServerName,
-  serverNameFromRowId,
+  serverNameOfRow,
   type McpServerInput
 } from "./model.js";
 import {
@@ -128,9 +128,7 @@ export class McpManagerGateway extends TypertRemoteService {
   }
 
   serverNameOf(row: PatchRow): string | undefined {
-    const name = row.config?.serverName;
-    if (typeof name === "string" && name !== "") return name;
-    return serverNameFromRowId(row.id);
+    return serverNameOfRow(row);
   }
 
   /** 按 serverName 找唯一的 MCP 行。没有或多条都抛错。 */

@@ -8,6 +8,7 @@ import {
   patchRowToView,
   rowIdForServerName,
   serverNameFromRowId,
+  serverNameOfRow,
   toOfficialConfig,
   toPatchRow,
   parseWireScalar,
@@ -209,6 +210,29 @@ const renamedPanel = applyServerEdit(toPatchRow(stdio), mcpServerInputSchema.par
 }), true);
 assert.equal(renamedPanel.id, "panel-mcp-gh");
 pass("applyServerEdit keeps hand-written ids and unmodeled fields");
+
+const jsDisabled = {
+  ...handWritten,
+  disabled: { __jsExpr: "process.env.OFF === '1'" }
+};
+const keptExpr = applyServerEdit(jsDisabled, mcpServerInputSchema.parse({
+  serverName: "memory",
+  transport: "stdio",
+  command: "node"
+}), true);
+assert.deepEqual(keptExpr.disabled, { __jsExpr: "process.env.OFF === '1'" });
+const keptExprWhileDisabling = applyServerEdit(jsDisabled, mcpServerInputSchema.parse({
+  serverName: "memory",
+  transport: "stdio",
+  command: "node"
+}), false);
+assert.deepEqual(keptExprWhileDisabling.disabled, { __jsExpr: "process.env.OFF === '1'" });
+pass("applyServerEdit keeps a !!js disabled expression");
+
+assert.equal(serverNameOfRow({ id: "panel-mcp-alpha", config: { serverName: "beta" } }), "beta");
+assert.equal(serverNameOfRow({ id: "panel-mcp-alpha", config: { serverName: "" } }), "alpha");
+assert.equal(serverNameOfRow({ id: "mcp-memory", config: { serverName: "memory" } }), "memory");
+pass("serverNameOfRow prefers config.serverName over the panel-mcp id suffix");
 
 // 15. ${NAME} 直觉写法：面板/CLI 的统一入口，保存时格式化成 !!js 模板
 assert.deepEqual(parseWireScalar("${MCP_TOKEN}"), { __jsExpr: BT + "${process.env.MCP_TOKEN}" + BT });

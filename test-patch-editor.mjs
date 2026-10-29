@@ -6,6 +6,7 @@ import {
   MCP_PLUGIN_NAME,
   extractManagedRows,
   generateManagedBlock,
+  isJsExprValue,
   listMcpPatchRows,
   readManagedBlock,
   readMcpEntryText,
@@ -470,6 +471,34 @@ await expectThrow("!!js disabled is refused", () => setEntryDisabledInText([
   assert.equal(next.startsWith("# keep\n"), true);
   assert.equal(next.includes("# >>> dsh-skill-mcp-panel"), false, "template save must not move the row into a managed block");
   pass("template row replace keeps unmodeled keys and the original location");
+}
+
+{
+  const original = [
+    "- id: mcp-memory",
+    "  name: '@deepseek-ai/dsh-mcp-client'",
+    "  disabled: !!js process.env.OFF === '1'",
+    "  config:",
+    "    serverName: memory",
+    "    transport: stdio",
+    "    command: npx",
+    ""
+  ].join("\n");
+  const row = listMcpPatchRows(original)[0];
+  assert.equal(isJsExprValue(row.disabled), true);
+  assert.equal(row.disabled.__jsExpr, "process.env.OFF === '1'");
+  const rewritten = replaceMcpEntryWithRowInText(original, { id: "mcp-memory", serverName: "memory" }, {
+    ...row,
+    config: { ...row.config, command: "node" }
+  });
+  assert.match(rewritten, /disabled: !!js /);
+  assert.match(rewritten, /process\.env\.OFF === '1'|process\.env\.OFF === ''1''/);
+  assert.equal(rewritten.includes("\ndisabled: true"), false);
+  assert.equal(rewritten.includes("command: node"), true);
+  const again = listMcpPatchRows(rewritten)[0];
+  assert.equal(isJsExprValue(again.disabled), true);
+  assert.equal(again.disabled.__jsExpr, "process.env.OFF === '1'");
+  pass("form/oauth rewrite keeps a !!js disabled expression");
 }
 
 console.log("\n" + passed + " passed, 0 failed");

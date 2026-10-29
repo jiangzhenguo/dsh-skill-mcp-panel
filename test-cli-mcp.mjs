@@ -125,6 +125,31 @@ try {
   assert.equal(afterHand.includes("mcp-memory"), false);
   assert.equal(afterHand.startsWith("# keep\n"), true);
   pass("dsh-panel mcp enable/disable/raw/remove operate on hand-written rows");
+
+  // id 后缀和 config.serverName 不一致时，list 印出的名字必须能被 disable 找到。
+  const renamed = [
+    "- id: panel-mcp-alpha",
+    "  name: '@deepseek-ai/dsh-mcp-client'",
+    "  config:",
+    "    serverName: beta",
+    "    transport: stdio",
+    "    command: node",
+    ""
+  ].join("\n");
+  await writeFile(patchPath, renamed);
+  const listedBeta = run(["mcp", "list", "--profile", "test"]);
+  assert.equal(listedBeta.status, 0, listedBeta.stderr);
+  assert.match(listedBeta.stdout, /启用\s+beta/);
+  assert.equal(/\balpha\b/.test(listedBeta.stdout), false);
+  const disableBeta = run(["mcp", "disable", "beta", "--profile", "test"]);
+  assert.equal(disableBeta.status, 0, disableBeta.stderr);
+  const disabledBeta = await readFile(patchPath, "utf8");
+  assert.match(disabledBeta, /disabled: true/);
+  assert.equal(disabledBeta.includes("serverName: beta"), true);
+  assert.equal(disabledBeta.includes("id: panel-mcp-alpha"), true);
+  const disableAlpha = run(["mcp", "disable", "alpha", "--profile", "test"]);
+  assert.notEqual(disableAlpha.status, 0);
+  pass("dsh-panel mcp resolves serverName from config before the id suffix");
   const version = run(["--version"]);
   assert.equal(version.status, 0, version.stderr);
   // 版本号从 package.json 读，避免每次发版都要改测试（旧写法硬编码 2.0.x）。

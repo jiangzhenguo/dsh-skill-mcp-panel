@@ -46,7 +46,7 @@ import {
   mcpServerInputSchema,
   patchRowToView,
   rowIdForServerName,
-  serverNameFromRowId,
+  serverNameOfRow,
   toOfficialConfig,
   type McpServerInput,
   type WireScalar
@@ -60,7 +60,7 @@ function profilePatchPath(profile: string): string {
 }
 
 function rowServerName(row: PatchRow): string | undefined {
-  return serverNameFromRowId(row.id) ?? (typeof row.config?.serverName === "string" ? row.config.serverName : undefined);
+  return serverNameOfRow(row);
 }
 
 async function readRows(profile: string) {

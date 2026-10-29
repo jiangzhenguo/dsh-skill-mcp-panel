@@ -69,7 +69,7 @@ export function isJsExprValue(value: unknown): value is JsExprValue {
 export interface PatchRow {
   id?: string;
   name?: string;
-  disabled?: boolean;
+  disabled?: boolean | JsExprValue;
   config?: Record<string, unknown>;
   [key: string]: unknown;
 }
@@ -108,7 +108,8 @@ function rowFromValue(value: unknown): PatchRow | undefined {
   const normalized: PatchRow = { ...row };
   if (typeof row.id !== "string") delete normalized.id;
   if (typeof row.name !== "string") delete normalized.name;
-  if (typeof row.disabled !== "boolean") delete normalized.disabled;
+  // 布尔开关留下；!!js 表达式也留下。其它写法丢掉，避免把坏值写回去。
+  if (typeof row.disabled !== "boolean" && !isJsExprValue(row.disabled)) delete normalized.disabled;
   if (row.config === null || typeof row.config !== "object" || Array.isArray(row.config)) delete normalized.config;
   return normalized;
 }

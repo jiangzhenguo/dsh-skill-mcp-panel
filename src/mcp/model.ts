@@ -173,6 +173,17 @@ export function serverNameFromRowId(id: string | undefined): string | undefined 
   return SERVER_NAME_RE.test(name) ? name : undefined;
 }
 
+/**
+ * 一条 MCP 行的 serverName。CLI、网关、面板用同一顺序：
+ * 非空的 `config.serverName` 优先，没有时才退回 `panel-mcp-*` 的 id 后缀。
+ * 反过来会让 list 印出的名字和 enable/disable/remove 对不上。
+ */
+export function serverNameOfRow(row: { id?: string; config?: { serverName?: unknown } } | undefined): string | undefined {
+  const name = row?.config?.serverName;
+  if (typeof name === "string" && name !== "") return name;
+  return serverNameFromRowId(row?.id);
+}
+
 /** null = 删除，string = 覆盖；缺省 key 保留旧值。 */
 export function mergeSecretPatch(previous: Record<string, WireScalar> | undefined, patch: SecretPatch): Record<string, WireScalar> {
   const merged: Record<string, WireScalar> = { ...(previous ?? {}) };
@@ -387,6 +398,9 @@ export function applyServerEdit(previous: PatchRow | undefined, input: McpServer
   if (next.transport === "streamable-http") next.headers = mergeSecretPatch(oldHeaders, next.headers);
   const normalized = mcpServerInputSchema.parse(next);
   const row = toPatchRow(normalized, enabled);
+  // !!js 的 disabled 不是布尔开关。表单保存不得把它换成 true/false 或删掉，
+  // 否则这条表达式会丢，服务器会按启用装载。要改它只能走原文编辑。
+  if (isJsExprValue(previous.disabled)) row.disabled = previous.disabled;
   const previousName = typeof oldConfig.serverName === "string" ? oldConfig.serverName : serverNameFromRowId(previous.id);
   if (typeof previous.id === "string" && previous.id !== rowIdForServerName(previousName ?? "")) row.id = previous.id;
   const config: Record<string, unknown> = { ...(row.config as Record<string, unknown>) };
