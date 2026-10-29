@@ -150,6 +150,23 @@ try {
   const disableAlpha = run(["mcp", "disable", "alpha", "--profile", "test"]);
   assert.notEqual(disableAlpha.status, 0);
   pass("dsh-panel mcp resolves serverName from config before the id suffix");
+
+  const jsOff = [
+    "- id: mcp-expr",
+    "  name: '@deepseek-ai/dsh-mcp-client'",
+    "  disabled: !!js process.env.OFF === '1'",
+    "  config:",
+    "    serverName: exprcli",
+    "    transport: stdio",
+    "    command: node",
+    ""
+  ].join("\n");
+  await writeFile(patchPath, jsOff);
+  const listedJs = run(["mcp", "list", "--profile", "test"]);
+  assert.equal(listedJs.status, 0, listedJs.stderr);
+  assert.match(listedJs.stdout, /停用\s+exprcli/);
+  assert.equal(/启用\s+exprcli/.test(listedJs.stdout), false);
+  pass("dsh-panel mcp list does not show a !!js disabled row as enabled");
   const version = run(["--version"]);
   assert.equal(version.status, 0, version.stderr);
   // 版本号从 package.json 读，避免每次发版都要改测试（旧写法硬编码 2.0.x）。

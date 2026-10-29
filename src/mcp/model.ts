@@ -285,6 +285,16 @@ function secretKeys(value: unknown): string[] {
   return Object.keys(value as Record<string, unknown>).filter((key) => typeof (value as Record<string, unknown>)[key] === "string" || isJsExprValue((value as Record<string, unknown>)[key]));
 }
 
+/**
+ * 这一行在面板上算不算启用。
+ * 缺省和 `disabled: false` 是启用；`disabled: true` 是停用。
+ * `!!js` 不是布尔 true，但宿主会求值，面板不能把它当成已启用。
+ */
+export function rowEnabled(row: { disabled?: unknown } | undefined): boolean {
+  if (isJsExprValue(row?.disabled)) return false;
+  return row?.disabled !== true;
+}
+
 /** patch 行 → 脱敏 view。密钥值不返回。 */
 export function patchRowToView(row: PatchRow): McpServerView | undefined {
   const config = configFromPatchRow(row);
@@ -296,7 +306,7 @@ export function patchRowToView(row: PatchRow): McpServerView | undefined {
   return {
     serverName,
     transport,
-    enabled: row.disabled !== true,
+    enabled: rowEnabled(row),
     entryId: row.id,
     command: transport === "stdio" ? formatWireScalar(config.command) : undefined,
     args: transport === "stdio" ? asStringArray(config.args).map((item) => formatWireScalar(item)) : undefined,

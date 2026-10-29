@@ -6,6 +6,7 @@ import {
   mcpServerInputSchema,
   mergeSecretPatch,
   patchRowToView,
+  rowEnabled,
   rowIdForServerName,
   serverNameFromRowId,
   serverNameOfRow,
@@ -228,6 +229,15 @@ const keptExprWhileDisabling = applyServerEdit(jsDisabled, mcpServerInputSchema.
 }), false);
 assert.deepEqual(keptExprWhileDisabling.disabled, { __jsExpr: "process.env.OFF === '1'" });
 pass("applyServerEdit keeps a !!js disabled expression");
+
+assert.equal(rowEnabled({ disabled: { __jsExpr: "process.env.OFF === '1'" } }), false);
+assert.equal(rowEnabled({ disabled: true }), false);
+assert.equal(rowEnabled({ disabled: false }), true);
+assert.equal(rowEnabled({}), true);
+const jsView = patchRowToView(jsDisabled);
+assert.equal(jsView.enabled, false);
+assert.equal(jsView.serverName, "memory");
+pass("!!js disabled is not shown as enabled");
 
 assert.equal(serverNameOfRow({ id: "panel-mcp-alpha", config: { serverName: "beta" } }), "beta");
 assert.equal(serverNameOfRow({ id: "panel-mcp-alpha", config: { serverName: "" } }), "alpha");

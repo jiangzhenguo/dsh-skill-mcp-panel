@@ -208,6 +208,44 @@ assert.equal(exprOnDisk.includes("\"`Bearer"), false, "expression must not degra
   assert.equal(afterRemove.includes("custom-beta"), false);
   assert.equal(afterRemove.includes("panel-mcp-alpha"), true);
   pass("gateway treats every mcp-client row as editable in place");
+
+  // 10. !!js disabled 不是「没写 disabled」。列表和保存后的卡片都是停用，
+  //     HMR 等的是 loader 报 disabled，而不是等它变成启用。
+  const jsText = [
+    "# profile",
+    "- id: mcp-expr",
+    "  name: '@deepseek-ai/dsh-mcp-client'",
+    "  disabled: !!js process.env.OFF === '1'",
+    "  config:",
+    "    serverName: exprgate",
+    "    transport: stdio",
+    "    command: node",
+    ""
+  ].join("\n");
+  await writeFile(join(dir, "cordis.patch.yml"), jsText);
+  ctx.loader = {
+    entries: function* () {
+      yield { id: "mcp-expr", disabled: true, fiber: undefined, options: { name: "@deepseek-ai/dsh-mcp-client" } };
+    }
+  };
+  const jsList = await gateway.list();
+  assert.equal(jsList.patch.ok, true);
+  assert.equal(jsList.servers.length, 1);
+  assert.equal(jsList.servers[0].serverName, "exprgate");
+  assert.equal(jsList.servers[0].enabled, false);
+  const jsSaved = await gateway.save({
+    input: { serverName: "exprgate", transport: "stdio", command: "npx" },
+    previousServerName: "exprgate",
+    enabled: true
+  });
+  assert.equal(jsSaved.server.enabled, false);
+  assert.equal(jsSaved.reconciled, true, "HMR wait must observe the disabled loader entry");
+  const jsOnDisk = await readFile(join(dir, "cordis.patch.yml"), "utf8");
+  assert.match(jsOnDisk, /disabled: !!js /);
+  assert.match(jsOnDisk, /process\.env\.OFF/);
+  assert.equal(jsOnDisk.includes("command: npx"), true);
+  assert.equal(jsOnDisk.includes("\ndisabled: true"), false);
+  pass("gateway treats !!js disabled as not enabled for list and save");
 } finally {
   await rm(dir, { recursive: true, force: true });
 }

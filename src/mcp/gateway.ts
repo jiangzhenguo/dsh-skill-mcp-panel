@@ -41,6 +41,7 @@ import {
   inputFromPatchRow,
   mcpServerInputSchema,
   patchRowToView,
+  rowEnabled,
   rowIdForServerName,
   serverNameOfRow,
   type McpServerInput
@@ -162,7 +163,7 @@ export class McpManagerGateway extends TypertRemoteService {
       const servers: any[] = [];
       for (const row of all) {
         const entry = typeof row.id === "string" ? getLoaderEntry(this.C, row.id) : undefined;
-        const view = this.decorate(row, true, entry, row.disabled !== true);
+        const view = this.decorate(row, true, entry, rowEnabled(row));
         if (view !== undefined) servers.push(view);
       }
       return { servers, externalServers: [], patch };
@@ -197,8 +198,10 @@ export class McpManagerGateway extends TypertRemoteService {
         throw new Error('serverName "' + input.serverName + '" 已存在（' + String(row.id ?? "未命名行") + "）");
       }
     }
-    const enabled = previous !== undefined ? previous.disabled !== true : payload.enabled;
+    // !!js disabled 不是「未禁用」。按启用去等 HMR 会超时，返回的卡片也会显示成开。
+    const enabled = previous !== undefined ? rowEnabled(previous) : payload.enabled;
     const nextRow = applyServerEdit(previous, input, enabled);
+    const shownEnabled = rowEnabled(nextRow);
     if (previous === undefined) {
       if (all.some((row) => row.id === nextRow.id)) throw new Error('id "' + String(nextRow.id) + '" 已存在');
       const nextRows = [...managed, nextRow];
@@ -209,13 +212,13 @@ export class McpManagerGateway extends TypertRemoteService {
     }
 
     const reconciled = typeof nextRow.id === "string"
-      ? enabled
+      ? shownEnabled
         ? await waitForLoaderState(this.C, nextRow.id, (entry) => entry !== undefined && entry.disabled !== true)
         : await waitForLoaderState(this.C, nextRow.id, (entry) => entry !== undefined && entry.disabled === true)
       : false;
 
     const entry = typeof nextRow.id === "string" ? getLoaderEntry(this.C, nextRow.id) : undefined;
-    const server = this.decorate(nextRow, true, entry, enabled);
+    const server = this.decorate(nextRow, true, entry, shownEnabled);
     if (server === undefined) throw new Error("写入成功但生成的 MCP 行无效");
     return { server, reconciled };
   }
@@ -267,7 +270,7 @@ export class McpManagerGateway extends TypertRemoteService {
     const { all } = await this.readRows();
     const previous = this.findUnique(all, payload.serverName);
     const written = await replaceMcpEntryText(this.patchPath(), { id: previous.id, serverName: payload.serverName }, payload.text);
-    const enabled = written.row.disabled !== true;
+    const enabled = rowEnabled(written.row);
     const reconciled = typeof written.row.id === "string"
       ? enabled
         ? await waitForLoaderState(this.C, written.row.id, (entry) => entry !== undefined && entry.disabled !== true)
