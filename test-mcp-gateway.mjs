@@ -209,8 +209,8 @@ assert.equal(exprOnDisk.includes("\"`Bearer"), false, "expression must not degra
   assert.equal(afterRemove.includes("panel-mcp-alpha"), true);
   pass("gateway treats every mcp-client row as editable in place");
 
-  // 10. !!js disabled 不是「没写 disabled」。列表和保存后的卡片都是停用，
-  //     HMR 等的是 loader 报 disabled，而不是等它变成启用。
+  // 10. !!js disabled 由宿主求值，当前可以是 false。不能等 loader 报 disabled === true，
+  //     否则保存会空转到超时。卡片仍按停用，表达式留在文件里。
   const jsText = [
     "# profile",
     "- id: mcp-expr",
@@ -225,7 +225,7 @@ assert.equal(exprOnDisk.includes("\"`Bearer"), false, "expression must not degra
   await writeFile(join(dir, "cordis.patch.yml"), jsText);
   ctx.loader = {
     entries: function* () {
-      yield { id: "mcp-expr", disabled: true, fiber: undefined, options: { name: "@deepseek-ai/dsh-mcp-client" } };
+      yield { id: "mcp-expr", disabled: false, fiber: undefined, options: { name: "@deepseek-ai/dsh-mcp-client" } };
     }
   };
   const jsList = await gateway.list();
@@ -233,19 +233,33 @@ assert.equal(exprOnDisk.includes("\"`Bearer"), false, "expression must not degra
   assert.equal(jsList.servers.length, 1);
   assert.equal(jsList.servers[0].serverName, "exprgate");
   assert.equal(jsList.servers[0].enabled, false);
+  const saveStarted = Date.now();
   const jsSaved = await gateway.save({
     input: { serverName: "exprgate", transport: "stdio", command: "npx" },
     previousServerName: "exprgate",
     enabled: true
   });
+  assert.ok(Date.now() - saveStarted < 1000, "form save must not wait out the HMR timeout");
   assert.equal(jsSaved.server.enabled, false);
-  assert.equal(jsSaved.reconciled, true, "HMR wait must observe the disabled loader entry");
+  assert.equal(jsSaved.reconciled, true);
   const jsOnDisk = await readFile(join(dir, "cordis.patch.yml"), "utf8");
   assert.match(jsOnDisk, /disabled: !!js /);
   assert.match(jsOnDisk, /process\.env\.OFF/);
   assert.equal(jsOnDisk.includes("command: npx"), true);
   assert.equal(jsOnDisk.includes("\ndisabled: true"), false);
-  pass("gateway treats !!js disabled as not enabled for list and save");
+  const exprRaw = await gateway.readRaw({ serverName: "exprgate" });
+  const rawStarted = Date.now();
+  const rawWritten = await gateway.writeRaw({
+    serverName: "exprgate",
+    text: exprRaw.text.replace("command: npx", "command: node")
+  });
+  assert.ok(Date.now() - rawStarted < 1000, "raw save must not wait out the HMR timeout");
+  assert.equal(rawWritten.server.enabled, false);
+  assert.equal(rawWritten.reconciled, true);
+  const afterRawJs = await readFile(join(dir, "cordis.patch.yml"), "utf8");
+  assert.match(afterRawJs, /disabled: !!js /);
+  assert.match(afterRawJs, /process\.env\.OFF/);
+  pass("gateway does not HMR-wait on a !!js disabled expression");
 } finally {
   await rm(dir, { recursive: true, force: true });
 }

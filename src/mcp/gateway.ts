@@ -22,6 +22,7 @@ import {
 } from "../oauth.js";
 import {
   MCP_PLUGIN_NAME,
+  isJsExprValue,
   isManagedRow,
   listMcpPatchRows,
   readManagedBlock,
@@ -77,6 +78,19 @@ function stripUndefined(value: any): any {
 }
 
 const MANAGED_ROW_IDS = new Set<string>();
+
+/**
+ * 布尔 `disabled` 等 loader 跟上。`!!js` 由宿主求值，结果可以不是 true，
+ * 再等 `disabled === true` 或等它变成启用都会空转到超时。
+ * 这种行写完即结束，卡片仍按停用展示，表达式留在文件里。
+ */
+async function reconcileToggle(ctx: any, id: string | undefined, disabled: unknown): Promise<boolean> {
+  if (typeof id !== "string" || id === "") return false;
+  if (isJsExprValue(disabled)) return true;
+  return disabled === true
+    ? await waitForLoaderState(ctx, id, (entry) => entry !== undefined && entry.disabled === true)
+    : await waitForLoaderState(ctx, id, (entry) => entry !== undefined && entry.disabled !== true);
+}
 
 /**
  * handler 内校验 payload：失败抛「字段：原因」的中文错误。
@@ -198,7 +212,7 @@ export class McpManagerGateway extends TypertRemoteService {
         throw new Error('serverName "' + input.serverName + '" 已存在（' + String(row.id ?? "未命名行") + "）");
       }
     }
-    // !!js disabled 不是「未禁用」。按启用去等 HMR 会超时，返回的卡片也会显示成开。
+    // !!js disabled 不是「未禁用」。卡片按停用展示，也不要等 loader 给出某个布尔值。
     const enabled = previous !== undefined ? rowEnabled(previous) : payload.enabled;
     const nextRow = applyServerEdit(previous, input, enabled);
     const shownEnabled = rowEnabled(nextRow);
@@ -211,11 +225,7 @@ export class McpManagerGateway extends TypertRemoteService {
       await replaceMcpEntryWithRow(this.patchPath(), { id: previous.id, serverName: this.serverNameOf(previous) }, nextRow);
     }
 
-    const reconciled = typeof nextRow.id === "string"
-      ? shownEnabled
-        ? await waitForLoaderState(this.C, nextRow.id, (entry) => entry !== undefined && entry.disabled !== true)
-        : await waitForLoaderState(this.C, nextRow.id, (entry) => entry !== undefined && entry.disabled === true)
-      : false;
+    const reconciled = await reconcileToggle(this.C, nextRow.id, nextRow.disabled);
 
     const entry = typeof nextRow.id === "string" ? getLoaderEntry(this.C, nextRow.id) : undefined;
     const server = this.decorate(nextRow, true, entry, shownEnabled);
@@ -271,11 +281,7 @@ export class McpManagerGateway extends TypertRemoteService {
     const previous = this.findUnique(all, payload.serverName);
     const written = await replaceMcpEntryText(this.patchPath(), { id: previous.id, serverName: payload.serverName }, payload.text);
     const enabled = rowEnabled(written.row);
-    const reconciled = typeof written.row.id === "string"
-      ? enabled
-        ? await waitForLoaderState(this.C, written.row.id, (entry) => entry !== undefined && entry.disabled !== true)
-        : await waitForLoaderState(this.C, written.row.id, (entry) => entry !== undefined && entry.disabled === true)
-      : false;
+    const reconciled = await reconcileToggle(this.C, written.row.id, written.row.disabled);
     const entry = typeof written.row.id === "string" ? getLoaderEntry(this.C, written.row.id) : undefined;
     const server = this.decorate(written.row, true, entry, enabled);
     if (server === undefined) throw new Error("原文已写入，但生成的 MCP 行无效");

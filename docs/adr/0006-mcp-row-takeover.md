@@ -26,6 +26,6 @@ Issue #67。维护者 Fishquito7 与提出者 jiangzhenguo 一致：不要只给
 
 - `externalServers` 仍留在 wire schema 里，但列表现在始终是空数组；全部 MCP 行都在 `servers`。
 - 手写 id 在表单保存后保持不变。只有 id 恰好是 `panel-mcp-<旧 serverName>` 时，改名才会把 id 换成新的 `panel-mcp-*`。
-- 表单保存会重排**这一条**的键序（未知键留在 config 末尾）。要逐字节保留注释和键序，用原文编辑。启停本身不重排。已有的 `!!js` `disabled` 在表单和 OAuth 写回时保留表达式，不会被收成布尔值。面板也不把它当成已启用：卡片显示停用，保存后按停用去等 loader，而不是等它变成启用。
+- 表单保存会重排**这一条**的键序（未知键留在 config 末尾）。要逐字节保留注释和键序，用原文编辑。启停本身不重排。已有的 `!!js` `disabled` 在表单和 OAuth 写回时保留表达式，不会被收成布尔值。面板也不把它当成已启用：卡片显示停用。保存和原文写回不再等 loader 把这条表达式收成某个布尔值，避免宿主求值结果不是 `true` 时热加载等待超时。
 - `serverName` 一律先看非空的 `config.serverName`，没有时才用 `panel-mcp-*` 的 id 后缀。CLI 和网关用同一规则。
 - `dsh-panel mcp list` 不再打印「受管 / 外部」。
