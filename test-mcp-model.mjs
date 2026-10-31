@@ -6,8 +6,10 @@ import {
   mcpServerInputSchema,
   mergeSecretPatch,
   patchRowToView,
+  rowEnabled,
   rowIdForServerName,
   serverNameFromRowId,
+  serverNameOfRow,
   toOfficialConfig,
   toPatchRow,
   parseWireScalar,
@@ -174,6 +176,73 @@ const clearedExpr = applyServerEdit(toPatchRow(withExpr), mcpServerInputSchema.p
 }));
 assert.deepEqual(clearedExpr.config.headers, {});
 pass("applyServerEdit keeps !!js secrets unless explicitly cleared");
+
+// 14b. #67：手写 id 与表单没建模的字段在编辑后还在；面板自己的 id 仍随改名更新。
+const handWritten = {
+  id: "mcp-memory",
+  name: "@deepseek-ai/dsh-mcp-client",
+  note: "keep-me",
+  config: {
+    serverName: "memory",
+    transport: "stdio",
+    command: "npx",
+    args: [],
+    env: {},
+    cwd: "",
+    toolCallTimeoutMs: 60000,
+    failOnStartupError: false,
+    reconnect: { enabled: true, initialDelayMs: 500, maxDelayMs: 30000, maxAttempts: 10 },
+    maxInstructionBytes: 8000
+  }
+};
+const kept = applyServerEdit(handWritten, mcpServerInputSchema.parse({
+  serverName: "memory",
+  transport: "stdio",
+  command: "node"
+}), true);
+assert.equal(kept.id, "mcp-memory");
+assert.equal(kept.note, "keep-me");
+assert.equal(kept.config.maxInstructionBytes, 8000);
+assert.equal(kept.config.command, "node");
+const renamedPanel = applyServerEdit(toPatchRow(stdio), mcpServerInputSchema.parse({
+  serverName: "gh",
+  transport: "stdio",
+  command: "npx"
+}), true);
+assert.equal(renamedPanel.id, "panel-mcp-gh");
+pass("applyServerEdit keeps hand-written ids and unmodeled fields");
+
+const jsDisabled = {
+  ...handWritten,
+  disabled: { __jsExpr: "process.env.OFF === '1'" }
+};
+const keptExpr = applyServerEdit(jsDisabled, mcpServerInputSchema.parse({
+  serverName: "memory",
+  transport: "stdio",
+  command: "node"
+}), true);
+assert.deepEqual(keptExpr.disabled, { __jsExpr: "process.env.OFF === '1'" });
+const keptExprWhileDisabling = applyServerEdit(jsDisabled, mcpServerInputSchema.parse({
+  serverName: "memory",
+  transport: "stdio",
+  command: "node"
+}), false);
+assert.deepEqual(keptExprWhileDisabling.disabled, { __jsExpr: "process.env.OFF === '1'" });
+pass("applyServerEdit keeps a !!js disabled expression");
+
+assert.equal(rowEnabled({ disabled: { __jsExpr: "process.env.OFF === '1'" } }), false);
+assert.equal(rowEnabled({ disabled: true }), false);
+assert.equal(rowEnabled({ disabled: false }), true);
+assert.equal(rowEnabled({}), true);
+const jsView = patchRowToView(jsDisabled);
+assert.equal(jsView.enabled, false);
+assert.equal(jsView.serverName, "memory");
+pass("!!js disabled is not shown as enabled");
+
+assert.equal(serverNameOfRow({ id: "panel-mcp-alpha", config: { serverName: "beta" } }), "beta");
+assert.equal(serverNameOfRow({ id: "panel-mcp-alpha", config: { serverName: "" } }), "alpha");
+assert.equal(serverNameOfRow({ id: "mcp-memory", config: { serverName: "memory" } }), "memory");
+pass("serverNameOfRow prefers config.serverName over the panel-mcp id suffix");
 
 // 15. ${NAME} 直觉写法：面板/CLI 的统一入口，保存时格式化成 !!js 模板
 assert.deepEqual(parseWireScalar("${MCP_TOKEN}"), { __jsExpr: BT + "${process.env.MCP_TOKEN}" + BT });

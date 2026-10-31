@@ -146,8 +146,8 @@ assert.equal(exprOnDisk.includes("\"`Bearer"), false, "expression must not degra
   assert.equal(afterDisconnect.includes("panel-mcp-expr"), true, "the row itself must survive");
   pass("gateway clears the OAuth header only");
 
-  // 9. 面板自己的行（id 前缀 panel-mcp-）落在受管块外时：只读，但必须标 orphan，
-  //    让界面能说清"这行是面板的，只是不在块内"，而不是笼统的"外部管理"。
+  // 9. #67：块外的手写行和 panel-mcp-* 行都是普通 MCP 行。启停、表单、原文一视同仁，
+  //    不迁进受管块，也不再标 orphan / external。
   await writeFile(join(dir, "cordis.patch.yml"), "# profile\n[]\n");
   await gateway.save({ input: { serverName: "alpha", transport: "stdio", command: "node" }, enabled: false });
   await gateway.save({ input: { serverName: "beta", transport: "stdio", command: "node" }, enabled: false });
@@ -156,18 +156,110 @@ assert.equal(exprOnDisk.includes("\"`Bearer"), false, "expression must not degra
     .split("\n")
     .filter((line) => !line.includes("dsh-skill-mcp-panel:mcp:begin") && !line.includes("dsh-skill-mcp-panel:mcp:end"))
     .join("\n")
-    .replace("id: panel-mcp-beta", "id: custom-beta");
+    .replace("id: panel-mcp-beta", "id: custom-beta")
+    .replace(/(id: custom-beta[\s\S]*?)([ \t]*)command: node\n/, "$1$2command: node\n$2maxInstructionBytes: 8000\n");
   await writeFile(join(dir, "cordis.patch.yml"), withoutMarkers);
+  ctx.loader = {
+    entries: function* () {
+      yield { id: "panel-mcp-alpha", disabled: true, fiber: undefined, options: { name: "@deepseek-ai/dsh-mcp-client" } };
+      yield { id: "custom-beta", disabled: true, fiber: undefined, options: { name: "@deepseek-ai/dsh-mcp-client" } };
+    }
+  };
 
-  const orphaned = await gateway.list();
-  assert.equal(orphaned.patch.ok, true);
-  assert.equal(orphaned.servers.length, 0, "no managed block means nothing is managed");
-  const panelOwned = orphaned.externalServers.find((server) => server.serverName === "alpha");
-  const foreignOwned = orphaned.externalServers.find((server) => server.serverName === "beta");
-  assert.equal(panelOwned?.orphan, true, "panel-prefixed row outside the block must be flagged orphan");
-  assert.equal(Boolean(foreignOwned?.orphan), false, "a row with a foreign id is not orphan");
-  mcpListResultSchema.parse(orphaned);
-  pass("gateway flags panel-owned rows that sit outside the managed block");
+  const taken = await gateway.list();
+  assert.equal(taken.patch.ok, true);
+  assert.equal(taken.externalServers.length, 0, "externalServers stays empty; every row is in servers");
+  assert.equal(taken.servers.length, 2);
+  const panelOwned = taken.servers.find((server) => server.serverName === "alpha");
+  const handWritten = taken.servers.find((server) => server.serverName === "beta");
+  assert.equal(panelOwned?.entryId, "panel-mcp-alpha");
+  assert.equal(handWritten?.entryId, "custom-beta");
+  assert.equal(panelOwned?.orphan, undefined);
+  assert.equal(handWritten?.orphan, undefined);
+  mcpListResultSchema.parse(taken);
+
+  const raw = await gateway.readRaw({ serverName: "beta" });
+  assert.equal(raw.entryId, "custom-beta");
+  assert.match(raw.text, /maxInstructionBytes: 8000/);
+  const written = await gateway.writeRaw({ serverName: "beta", text: raw.text.replace("maxInstructionBytes: 8000", "maxInstructionBytes: 4096") });
+  assert.equal(written.server.serverName, "beta");
+  const afterRaw = await readFile(join(dir, "cordis.patch.yml"), "utf8");
+  assert.equal(afterRaw.includes("maxInstructionBytes: 4096"), true);
+  assert.equal(afterRaw.includes("id: custom-beta"), true);
+  assert.equal(afterRaw.includes("dsh-skill-mcp-panel:mcp:begin"), false, "raw edit must not create a managed block");
+  assert.equal(afterRaw.startsWith("# profile\n"), true);
+
+  const edited = await gateway.save({
+    input: { serverName: "beta", transport: "stdio", command: "npx" },
+    previousServerName: "beta",
+    enabled: false
+  });
+  assert.equal(edited.server.serverName, "beta");
+  assert.equal(edited.server.command, "npx");
+  const afterForm = await readFile(join(dir, "cordis.patch.yml"), "utf8");
+  assert.equal(afterForm.includes("id: custom-beta"), true, "form save keeps the hand-written id");
+  assert.equal(afterForm.includes("maxInstructionBytes: 4096"), true, "form save keeps unmodeled fields");
+  assert.equal(afterForm.includes("command: npx"), true);
+  assert.equal(afterForm.includes("id: panel-mcp-alpha"), true, "editing beta must not drop alpha");
+  assert.equal(afterForm.includes("dsh-skill-mcp-panel:mcp:begin"), false);
+
+  await gateway.removeServer({ serverName: "beta" });
+  const afterRemove = await readFile(join(dir, "cordis.patch.yml"), "utf8");
+  assert.equal(afterRemove.includes("custom-beta"), false);
+  assert.equal(afterRemove.includes("panel-mcp-alpha"), true);
+  pass("gateway treats every mcp-client row as editable in place");
+
+  // 10. !!js disabled 由宿主求值，当前可以是 false。不能等 loader 报 disabled === true，
+  //     否则保存会空转到超时。卡片仍按停用，表达式留在文件里。
+  const jsText = [
+    "# profile",
+    "- id: mcp-expr",
+    "  name: '@deepseek-ai/dsh-mcp-client'",
+    "  disabled: !!js process.env.OFF === '1'",
+    "  config:",
+    "    serverName: exprgate",
+    "    transport: stdio",
+    "    command: node",
+    ""
+  ].join("\n");
+  await writeFile(join(dir, "cordis.patch.yml"), jsText);
+  ctx.loader = {
+    entries: function* () {
+      yield { id: "mcp-expr", disabled: false, fiber: undefined, options: { name: "@deepseek-ai/dsh-mcp-client" } };
+    }
+  };
+  const jsList = await gateway.list();
+  assert.equal(jsList.patch.ok, true);
+  assert.equal(jsList.servers.length, 1);
+  assert.equal(jsList.servers[0].serverName, "exprgate");
+  assert.equal(jsList.servers[0].enabled, false);
+  const saveStarted = Date.now();
+  const jsSaved = await gateway.save({
+    input: { serverName: "exprgate", transport: "stdio", command: "npx" },
+    previousServerName: "exprgate",
+    enabled: true
+  });
+  assert.ok(Date.now() - saveStarted < 1000, "form save must not wait out the HMR timeout");
+  assert.equal(jsSaved.server.enabled, false);
+  assert.equal(jsSaved.reconciled, true);
+  const jsOnDisk = await readFile(join(dir, "cordis.patch.yml"), "utf8");
+  assert.match(jsOnDisk, /disabled: !!js /);
+  assert.match(jsOnDisk, /process\.env\.OFF/);
+  assert.equal(jsOnDisk.includes("command: npx"), true);
+  assert.equal(jsOnDisk.includes("\ndisabled: true"), false);
+  const exprRaw = await gateway.readRaw({ serverName: "exprgate" });
+  const rawStarted = Date.now();
+  const rawWritten = await gateway.writeRaw({
+    serverName: "exprgate",
+    text: exprRaw.text.replace("command: npx", "command: node")
+  });
+  assert.ok(Date.now() - rawStarted < 1000, "raw save must not wait out the HMR timeout");
+  assert.equal(rawWritten.server.enabled, false);
+  assert.equal(rawWritten.reconciled, true);
+  const afterRawJs = await readFile(join(dir, "cordis.patch.yml"), "utf8");
+  assert.match(afterRawJs, /disabled: !!js /);
+  assert.match(afterRawJs, /process\.env\.OFF/);
+  pass("gateway does not HMR-wait on a !!js disabled expression");
 } finally {
   await rm(dir, { recursive: true, force: true });
 }
